@@ -96,10 +96,10 @@ AVPacket *nextPacket(AVFormatContext *formatContext) {
 std::vector<uint8_t> Decoder::_processVideoFrame(const AVFrame &src) {
     const int dstWidth = src.width, dstHeight = src.height, dstFormat = AV_PIX_FMT_BGRA;
 
-    uint8_t *dstData[4];
-    int dstLinesize[4];
+    std::vector<uint8_t *> dstData(4);
+    std::vector<int> dstLinesize(4);
 
-    int ret = av_image_alloc(dstData, dstLinesize, dstWidth, dstHeight, (AVPixelFormat) dstFormat, 1);
+    int ret = av_image_alloc(dstData.data(), dstLinesize.data(), dstWidth, dstHeight, (AVPixelFormat) dstFormat, 1);
     if (ret < 0) {
         std::cerr << "Error: Failed to allocate memory for destination frame" << std::endl;
         return {};
@@ -123,7 +123,7 @@ std::vector<uint8_t> Decoder::_processVideoFrame(const AVFrame &src) {
     ret = sws_scale(
             swsContext,
             src.data, src.linesize, 0, src.height,
-            dstData, dstLinesize
+            dstData.data(), dstLinesize.data()
     );
 
     if (ret < 0) {
@@ -142,7 +142,7 @@ std::vector<uint8_t> Decoder::_processVideoFrame(const AVFrame &src) {
 }
 
 std::vector<uint8_t> Decoder::_processAudioFrame(const AVFrame &src) {
-    const int outChannels = src.channels, outSampleRate = src.sample_rate, outSampleFormat = AV_SAMPLE_FMT_FLT;
+    const int outChannels = src.channels, outSampleRate = src.sample_rate, outSampleFormat = AV_SAMPLE_FMT_DBL;
 
     if (src.format == outSampleFormat) {
         const auto bufferSize = av_samples_get_buffer_size(
