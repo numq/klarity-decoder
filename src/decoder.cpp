@@ -99,7 +99,14 @@ std::vector<uint8_t> Decoder::_processVideoFrame(const AVFrame &src) {
     std::vector<uint8_t *> dstData(4);
     std::vector<int> dstLinesize(4);
 
-    int ret = av_image_alloc(dstData.data(), dstLinesize.data(), dstWidth, dstHeight, (AVPixelFormat) dstFormat, 1);
+    int ret = av_image_alloc(
+            dstData.data(),
+            dstLinesize.data(),
+            dstWidth,
+            dstHeight,
+            (AVPixelFormat) dstFormat,
+            1
+    );
     if (ret < 0) {
         std::cerr << "Error: Failed to allocate memory for destination frame" << std::endl;
         return {};
@@ -142,26 +149,16 @@ std::vector<uint8_t> Decoder::_processVideoFrame(const AVFrame &src) {
 }
 
 std::vector<uint8_t> Decoder::_processAudioFrame(const AVFrame &src) {
-    const int outChannels = src.channels, outSampleRate = src.sample_rate, outSampleFormat = AV_SAMPLE_FMT_DBL;
+    const int dstChannels = src.channels, dstSampleRate = src.sample_rate, dstSampleFormat = AV_SAMPLE_FMT_FLT;
 
-    if (src.format == outSampleFormat) {
-        const auto bufferSize = av_samples_get_buffer_size(
-                nullptr,
-                src.channels,
-                src.nb_samples,
-                (AVSampleFormat) src.format,
-                0
-        );
-
-        return {src.data[0], src.data[0] + bufferSize};
-    }
+    const int64_t srcChannelLayout = av_get_default_channel_layout(src.channels), dstChannelLayout = srcChannelLayout;
 
     swrContext = swr_alloc_set_opts(
             swrContext,
-            av_get_default_channel_layout(outChannels),
-            (AVSampleFormat) outSampleFormat,
-            outSampleRate,
-            (int) src.channel_layout,
+            dstChannelLayout,
+            (AVSampleFormat) dstSampleFormat,
+            dstSampleRate,
+            srcChannelLayout,
             (AVSampleFormat) src.format,
             src.sample_rate,
             0,
@@ -179,51 +176,35 @@ std::vector<uint8_t> Decoder::_processAudioFrame(const AVFrame &src) {
         return {};
     }
 
-    auto dst = av_frame_alloc();
-    if (!dst) {
-        std::cerr << "Error: Failed to allocate memory for audio frame" << std::endl;
-        return {};
-    }
+    const int64_t outSamples = swr_get_delay(swrContext, src.sample_rate) + src.nb_samples;
 
-    const auto outSamples = (int) av_rescale_rnd(
-            swr_get_delay(swrContext, src.sample_rate) + src.nb_samples,
-            outSampleRate,
-            src.sample_rate,
-            AV_ROUND_UP
+    std::vector<uint8_t> dstData(
+            av_samples_get_buffer_size(
+                    nullptr,
+                    dstChannels,
+                    (int) outSamples,
+                    (AVSampleFormat) dstSampleFormat,
+                    0
+            )
     );
 
-    dst->channel_layout = src.channel_layout;
-    dst->sample_rate = src.sample_rate;
-    dst->format = outSampleFormat;
-    dst->nb_samples = outSamples;
+    int convertedSamples = swr_convert(
+            swrContext,
+            (uint8_t **) &dstData,
+            (int) outSamples,
+            (const uint8_t **) src.data,
+            src.nb_samples
+    );
 
-    if (av_frame_get_buffer(dst, 0) < 0) {
-        std::cerr << "Error: Failed to allocate memory for audio buffer" << std::endl;
-        av_frame_free(&dst);
-        return {};
-    }
-
-    int ret = swr_convert_frame(swrContext, dst, &src);
-
-    if (ret < 0) {
+    if (convertedSamples < 0) {
         std::cerr << "Error: Failed to resample audio" << std::endl;
-        av_frame_free(&dst);
+        swr_free(&swrContext);
         return {};
     }
 
-    const auto bufferSize = av_samples_get_buffer_size(
-            nullptr,
-            dst->channels,
-            dst->nb_samples,
-            (AVSampleFormat) dst->format,
-            0
-    );
+    swr_free(&swrContext);
 
-    std::vector<uint8_t> bytes(dst->data[0], dst->data[0] + bufferSize);
-
-    av_frame_free(&dst);
-
-    return bytes;
+    return dstData;
 }
 
 Frame *Decoder::_readFrame(bool doVideo, bool doAudio) {
