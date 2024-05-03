@@ -31,8 +31,6 @@ AVStream *initializeStream(const AVFormatContext &formatContext, const AVMediaTy
         }
     }
 
-    std::cerr << "Error: No stream of type " << av_get_media_type_string(type) << " found" << std::endl;
-
     return nullptr;
 }
 
