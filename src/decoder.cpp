@@ -205,7 +205,7 @@ std::vector<uint8_t> Decoder::_processAudioFrame(const AVFrame &src) {
     return dstData;
 }
 
-Frame *Decoder::_readFrame(bool doVideo, bool doAudio) {
+Frame *Decoder::_nextFrame() {
     auto avFrame = av_frame_alloc();
 
     if (!avFrame) {
@@ -222,17 +222,37 @@ Frame *Decoder::_readFrame(bool doVideo, bool doAudio) {
 
         if (!packet) break;
 
-        auto hasVideo = doVideo && videoCodecContext != nullptr && videoStream != nullptr && videoStream->index >= 0 &&
-                        packet->stream_index == videoStream->index;
-
-        auto hasAudio = doAudio && audioCodecContext != nullptr && audioStream != nullptr && audioStream->index >= 0 &&
+        auto hasAudio = audioCodecContext != nullptr && audioStream != nullptr && audioStream->index >= 0 &&
                         packet->stream_index == audioStream->index;
 
-        if (hasVideo) {
-            packet->dts = av_rescale_q(packet->dts, videoStream->time_base, av_make_q(1, AV_TIME_BASE));
+        auto hasVideo = videoCodecContext != nullptr && videoStream != nullptr && videoStream->index >= 0 &&
+                        packet->stream_index == videoStream->index;
 
-            packet->pts = av_rescale_q(packet->pts, videoStream->time_base, av_make_q(1, AV_TIME_BASE));
+        if (hasAudio) {
+            if (avcodec_send_packet(audioCodecContext, packet) < 0) {
+                std::cerr << "Error sending packet to audio codec" << std::endl;
+                av_packet_unref(packet);
+                continue;
+            }
 
+            int ret = avcodec_receive_frame(audioCodecContext, avFrame);
+
+            if (ret < 0) {
+                if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+                    av_packet_unref(packet);
+                    continue;
+                } else {
+                    std::cerr << "Error receiving frame" << std::endl;
+                    break;
+                }
+            }
+
+            const auto timestampMicros = avFrame->best_effort_timestamp;
+
+            auto samples = _processAudioFrame(*avFrame);
+
+            if (!samples.empty()) frame = new Frame(Frame::FrameType::AUDIO, timestampMicros, samples);
+        } else if (hasVideo) {
             int ret = avcodec_send_packet(videoCodecContext, packet);
 
             if (ret < 0) {
@@ -258,34 +278,6 @@ Frame *Decoder::_readFrame(bool doVideo, bool doAudio) {
             auto pixels = _processVideoFrame(*avFrame);
 
             if (!pixels.empty()) frame = new Frame(Frame::FrameType::VIDEO, timestampMicros, pixels);
-        } else if (hasAudio) {
-            packet->dts = av_rescale_q(packet->dts, audioStream->time_base, av_make_q(1, AV_TIME_BASE));
-
-            packet->pts = av_rescale_q(packet->pts, audioStream->time_base, av_make_q(1, AV_TIME_BASE));
-
-            if (avcodec_send_packet(audioCodecContext, packet) < 0) {
-                std::cerr << "Error sending packet to audio codec" << std::endl;
-                av_packet_unref(packet);
-                continue;
-            }
-
-            int ret = avcodec_receive_frame(audioCodecContext, avFrame);
-
-            if (ret < 0) {
-                if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-                    av_packet_unref(packet);
-                    continue;
-                } else {
-                    std::cerr << "Error receiving frame" << std::endl;
-                    break;
-                }
-            }
-
-            const auto timestampMicros = avFrame->best_effort_timestamp;
-
-            auto samples = _processAudioFrame(*avFrame);
-
-            if (!samples.empty()) frame = new Frame(Frame::FrameType::AUDIO, timestampMicros, samples);
         }
 
         av_packet_unref(packet);
@@ -299,38 +291,38 @@ Frame *Decoder::_readFrame(bool doVideo, bool doAudio) {
 }
 
 void Decoder::_seekTo(const long timestampMicros) {
-    if (videoCodecContext) {
-        avcodec_flush_buffers(videoCodecContext);
-    }
-
     if (audioCodecContext) {
         avcodec_flush_buffers(audioCodecContext);
+    }
+
+    if (videoCodecContext) {
+        avcodec_flush_buffers(videoCodecContext);
     }
 
     av_seek_frame(formatContext, -1, timestampMicros, AVSEEK_FLAG_BACKWARD);
 }
 
 void Decoder::_reset() {
-    if (videoCodecContext) {
-        avcodec_flush_buffers(videoCodecContext);
-    }
-
     if (audioCodecContext) {
         avcodec_flush_buffers(audioCodecContext);
+    }
+
+    if (videoCodecContext) {
+        avcodec_flush_buffers(videoCodecContext);
     }
 
     av_seek_frame(formatContext, -1, 0, AVSEEK_FLAG_ANY);
 }
 
 void Decoder::_cleanUp() {
-    if (swsContext) {
-        sws_freeContext(swsContext);
-        swsContext = nullptr;
-    }
-
     if (swrContext) {
         swr_free(&swrContext);
         swrContext = nullptr;
+    }
+
+    if (swsContext) {
+        sws_freeContext(swsContext);
+        swsContext = nullptr;
     }
 
     if (formatContext) {
@@ -338,19 +330,19 @@ void Decoder::_cleanUp() {
         formatContext = nullptr;
     }
 
-    if (videoCodecContext) {
-        avcodec_free_context(&videoCodecContext);
-        videoCodecContext = nullptr;
-    }
-
     if (audioCodecContext) {
         avcodec_free_context(&audioCodecContext);
         audioCodecContext = nullptr;
     }
 
-    videoStream = nullptr;
+    if (videoCodecContext) {
+        avcodec_free_context(&videoCodecContext);
+        videoCodecContext = nullptr;
+    }
 
     audioStream = nullptr;
+
+    videoStream = nullptr;
 }
 
 Decoder::Decoder(const std::string &location, const bool findAudioStream, const bool findVideoStream) {
@@ -371,30 +363,31 @@ Decoder::Decoder(const std::string &location, const bool findAudioStream, const 
 
         format = new Format(formatContext->duration);
 
-        if (findAudioStream) audioStream = initializeStream(*formatContext, AVMEDIA_TYPE_AUDIO);
+        if (findAudioStream) {
+            audioStream = initializeStream(*formatContext, AVMEDIA_TYPE_AUDIO);
 
-        if (audioStream) {
-            audioCodecContext = initializeCodecContext(*audioStream);
-
-            format->sampleRate = audioCodecContext->sample_rate;
-
-            format->channels = audioCodecContext->channels;
+            if (audioStream) {
+                audioCodecContext = initializeCodecContext(*audioStream);
+                format->sampleRate = audioCodecContext->sample_rate;
+                format->channels = audioCodecContext->channels;
+            }
         }
 
-        if (findVideoStream) videoStream = initializeStream(*formatContext, AVMEDIA_TYPE_VIDEO);
+        if (findVideoStream) {
+            videoStream = initializeStream(*formatContext, AVMEDIA_TYPE_VIDEO);
 
-        if (videoStream) {
-            videoCodecContext = initializeCodecContext(*videoStream);
-
-            format->width = videoCodecContext->width;
-
-            format->height = videoCodecContext->height;
-
-            const auto rational = videoStream->avg_frame_rate;
-            format->frameRate = rational.den > 0 ? (double) rational.num / rational.den : 0.0;
+            if (videoStream) {
+                videoCodecContext = initializeCodecContext(*videoStream);
+                format->width = videoCodecContext->width;
+                format->height = videoCodecContext->height;
+                const auto rational = videoStream->avg_frame_rate;
+                format->frameRate = rational.den > 0 ? (double) rational.num / rational.den : 0.0;
+            }
         }
 
-        if (!audioStream && !videoStream) throw std::logic_error("Unable to create empty decoder");
+        if (!audioStream && !videoStream) {
+            throw std::logic_error("Unable to open media");
+        }
     } catch (...) {
         _cleanUp();
         throw;
@@ -407,12 +400,12 @@ Decoder::~Decoder() {
     _cleanUp();
 }
 
-Frame *Decoder::readFrame(const bool doVideo, const bool doAudio) {
+Frame *Decoder::nextFrame() {
     std::lock_guard<std::mutex> lock(mutex);
 
     if (!formatContext) return nullptr;
 
-    return _readFrame(doVideo, doAudio);
+    return _nextFrame();
 }
 
 void Decoder::seekTo(const long timestampMicros) {
