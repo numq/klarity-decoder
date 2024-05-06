@@ -4,19 +4,17 @@ AVFormatContext *initializeFormatContext(const std::string &location) {
     auto formatContext = avformat_alloc_context();
 
     if (!formatContext) {
-        std::cerr << "Error allocating AV format context" << std::endl;
-        return nullptr;
+        throw std::logic_error("Error allocating AV format context");
     }
 
     if (avformat_open_input(&formatContext, location.c_str(), nullptr, nullptr) != 0) {
-        std::cerr << "Error opening file " << location << ": avformat_open_input failed" << std::endl;
-        return nullptr;
+        throw std::logic_error(
+                ("Error finding stream information for file " + location + ": avformat_open_input failed").c_str());
     }
 
     if (avformat_find_stream_info(formatContext, nullptr) < 0) {
-        std::cerr << "Error finding stream information for file " << location << std::endl;
         avformat_close_input(&formatContext);
-        return nullptr;
+        throw std::logic_error(("Error finding stream information for file " + location).c_str());
     }
 
     return formatContext;
@@ -38,33 +36,30 @@ AVCodecContext *initializeCodecContext(const AVStream &stream) {
     const auto codec = avcodec_find_decoder(stream.codecpar->codec_id);
 
     if (!codec) {
-        std::cerr << "Error: Codec not found for stream with codec ID: " << stream.codecpar->codec_id << std::endl;
-        return nullptr;
+        throw std::logic_error(
+                ("Codec not found for stream with codec ID: " + std::to_string(stream.codecpar->codec_id)).c_str());
     }
 
     if (codec->type != AVMEDIA_TYPE_AUDIO && codec->type != AVMEDIA_TYPE_VIDEO) {
-        std::cerr << "Error: Unsupported media type for codec" << std::endl;
-        return nullptr;
+        throw std::logic_error("Unsupported media type for codec");
     }
 
     auto codecContext = avcodec_alloc_context3(codec);
 
     if (!codecContext) {
-        std::cerr << "Error: Could not allocate codec context" << std::endl;
-        return nullptr;
+        throw std::logic_error("Could not allocate codec context");
     }
 
     if (avcodec_parameters_to_context(codecContext, stream.codecpar) < 0) {
-        std::cerr << "Error: Could not set parameters to context for codec ID: " << stream.codecpar->codec_id
-                  << std::endl;
         avcodec_free_context(&codecContext);
-        return nullptr;
+        throw std::logic_error(("Could not set parameters to context for codec ID: " +
+                                std::to_string(stream.codecpar->codec_id)).c_str());
     }
 
     if (avcodec_open2(codecContext, codec, nullptr) < 0) {
-        std::cerr << "Error: Could not open codec for codec ID: " << stream.codecpar->codec_id << std::endl;
         avcodec_free_context(&codecContext);
-        return nullptr;
+        throw std::logic_error(
+                ("Could not open codec for codec ID: " + std::to_string(stream.codecpar->codec_id)).c_str());
     }
 
     return codecContext;
@@ -74,16 +69,12 @@ AVPacket *nextPacket(AVFormatContext *formatContext) {
     auto packet = av_packet_alloc();
 
     if (!packet) {
-        std::cerr << "Error allocating packet" << std::endl;
-        return nullptr;
+        throw std::logic_error("Error allocating packet");
     }
 
     int ret = av_read_frame(formatContext, packet);
 
     if (ret < 0) {
-        if (ret != AVERROR_EOF) {
-            std::cerr << "Error reading frame" << std::endl;
-        }
         av_packet_free(&packet);
         return nullptr;
     }
@@ -106,8 +97,7 @@ std::vector<uint8_t> Decoder::_processVideoFrame(const AVFrame &src) {
             1
     );
     if (ret < 0) {
-        std::cerr << "Error: Failed to allocate memory for destination frame" << std::endl;
-        return {};
+        throw std::logic_error("Failed to allocate memory for destination frame");
     }
 
     if (!swsContext) {
@@ -119,9 +109,8 @@ std::vector<uint8_t> Decoder::_processVideoFrame(const AVFrame &src) {
         );
 
         if (!swsContext) {
-            std::cerr << "Error: SwsContext is not initialized" << std::endl;
             av_freep(&dstData[0]);
-            return {};
+            throw std::logic_error("SwsContext is not initialized");
         }
     }
 
@@ -132,9 +121,8 @@ std::vector<uint8_t> Decoder::_processVideoFrame(const AVFrame &src) {
     );
 
     if (ret < 0) {
-        std::cerr << "Error: Failed to rescale video" << std::endl;
         av_freep(&dstData[0]);
-        return {};
+        throw std::logic_error("Failed to rescale video");
     }
 
     const int bufferSize = dstLinesize[0] * dstHeight;
@@ -164,14 +152,12 @@ std::vector<uint8_t> Decoder::_processAudioFrame(const AVFrame &src) {
     );
 
     if (!swrContext) {
-        std::cerr << "Error: SwrContext is not initialized" << std::endl;
-        return {};
+        throw std::logic_error("SwrContext is not initialized");
     }
 
     if (swr_init(swrContext) < 0) {
-        std::cerr << "Error: Failed to initialize SwrContext" << std::endl;
         swr_free(&swrContext);
-        return {};
+        throw std::logic_error("Failed to initialize SwrContext");
     }
 
     const int64_t outSamples = swr_get_delay(swrContext, src.sample_rate) + src.nb_samples;
@@ -195,9 +181,8 @@ std::vector<uint8_t> Decoder::_processAudioFrame(const AVFrame &src) {
     );
 
     if (convertedSamples < 0) {
-        std::cerr << "Error: Failed to resample audio" << std::endl;
         swr_free(&swrContext);
-        return {};
+        throw std::logic_error("Failed to resample audio");
     }
 
     swr_free(&swrContext);
@@ -209,8 +194,7 @@ Frame *Decoder::_nextFrame() {
     auto avFrame = av_frame_alloc();
 
     if (!avFrame) {
-        std::cerr << "Error allocating frame" << std::endl;
-        return nullptr;
+        throw std::logic_error("Failed to allocate frame");
     }
 
     Frame *frame = nullptr;
@@ -220,7 +204,9 @@ Frame *Decoder::_nextFrame() {
     while (!frame) {
         packet = nextPacket(formatContext);
 
-        if (!packet) break;
+        if (!packet) {
+            break;
+        }
 
         auto hasAudio = audioCodecContext != nullptr && audioStream != nullptr && audioStream->index >= 0 &&
                         packet->stream_index == audioStream->index;
@@ -230,7 +216,6 @@ Frame *Decoder::_nextFrame() {
 
         if (hasAudio) {
             if (avcodec_send_packet(audioCodecContext, packet) < 0) {
-                std::cerr << "Error sending packet to audio codec" << std::endl;
                 av_packet_unref(packet);
                 continue;
             }
@@ -242,12 +227,13 @@ Frame *Decoder::_nextFrame() {
                     av_packet_unref(packet);
                     continue;
                 } else {
-                    std::cerr << "Error receiving frame" << std::endl;
-                    break;
+                    throw std::logic_error("Failed to receive frame");
                 }
             }
 
-            const auto timestampMicros = avFrame->best_effort_timestamp;
+            const auto timestampMicros = static_cast<int64_t>(
+                    std::round((double) avFrame->best_effort_timestamp * av_q2d(audioStream->time_base) * 1000000)
+            );
 
             auto samples = _processAudioFrame(*avFrame);
 
@@ -256,7 +242,6 @@ Frame *Decoder::_nextFrame() {
             int ret = avcodec_send_packet(videoCodecContext, packet);
 
             if (ret < 0) {
-                std::cerr << "Error sending packet to video codec" << std::endl;
                 av_packet_unref(packet);
                 continue;
             }
@@ -268,12 +253,13 @@ Frame *Decoder::_nextFrame() {
                     av_packet_unref(packet);
                     continue;
                 } else {
-                    std::cerr << "Error receiving frame" << std::endl;
-                    break;
+                    throw std::logic_error("Failed to receive frame");
                 }
             }
 
-            const auto timestampMicros = avFrame->best_effort_timestamp;
+            const auto timestampMicros = static_cast<int64_t>(
+                    std::round((double) avFrame->best_effort_timestamp * av_q2d(videoStream->time_base) * 1000000)
+            );
 
             auto pixels = _processVideoFrame(*avFrame);
 
@@ -299,7 +285,7 @@ void Decoder::_seekTo(const long timestampMicros) {
         avcodec_flush_buffers(videoCodecContext);
     }
 
-    av_seek_frame(formatContext, -1, timestampMicros, AVSEEK_FLAG_BACKWARD);
+    avformat_seek_file(formatContext, -1, INT64_MIN, timestampMicros, INT64_MAX, AVSEEK_FLAG_ANY);
 }
 
 void Decoder::_reset() {
@@ -311,7 +297,7 @@ void Decoder::_reset() {
         avcodec_flush_buffers(videoCodecContext);
     }
 
-    av_seek_frame(formatContext, -1, 0, AVSEEK_FLAG_ANY);
+    avformat_seek_file(formatContext, -1, INT64_MIN, 0, INT64_MAX, AVSEEK_FLAG_BACKWARD);
 }
 
 void Decoder::_cleanUp() {
@@ -353,15 +339,24 @@ Decoder::Decoder(const std::string &location, const bool findAudioStream, const 
     avformat_network_init();
 
     try {
-        if (formatContext) _cleanUp();
-
         formatContext = initializeFormatContext(location);
 
         if (!formatContext) {
             throw std::logic_error(("Failed to initialize format context for location: " + location).c_str());
         }
 
-        format = new Format(formatContext->duration);
+        int64_t durationMicros = 0;
+        for (int i = 0; i < formatContext->nb_streams; ++i) {
+            const AVStream *stream = formatContext->streams[i];
+            int64_t streamDurationMicros = av_rescale_q(
+                    stream->duration,
+                    stream->time_base,
+                    AVRational{1, AV_TIME_BASE}
+            );
+            durationMicros = std::max(durationMicros, streamDurationMicros);
+        }
+
+        format = new Format(durationMicros);
 
         if (findAudioStream) {
             audioStream = initializeStream(*formatContext, AVMEDIA_TYPE_AUDIO);
@@ -403,7 +398,9 @@ Decoder::~Decoder() {
 Frame *Decoder::nextFrame() {
     std::lock_guard<std::mutex> lock(mutex);
 
-    if (!formatContext) return nullptr;
+    if (!format) {
+        throw std::logic_error("Not initialized");
+    }
 
     return _nextFrame();
 }
@@ -411,13 +408,23 @@ Frame *Decoder::nextFrame() {
 void Decoder::seekTo(const long timestampMicros) {
     std::lock_guard<std::mutex> lock(mutex);
 
-    if (!formatContext) return;
+    if (!format) {
+        throw std::logic_error("Not initialized");
+    }
+
+    if (timestampMicros < 0 || timestampMicros > format->durationMicros) {
+        throw std::logic_error("Invalid timestamp");
+    }
 
     _seekTo(timestampMicros);
 }
 
 void Decoder::reset() {
     std::lock_guard<std::mutex> lock(mutex);
+
+    if (!format) {
+        throw std::logic_error("Not initialized");
+    }
 
     _reset();
 }
