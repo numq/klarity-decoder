@@ -7,7 +7,7 @@ add_library(klarity_decoder SHARED
         src/format.cpp
         src/frame.cpp
         src/decoder.cpp
-        )
+)
 
 target_include_directories(klarity_decoder PRIVATE include)
 
@@ -25,4 +25,4 @@ target_link_libraries(klarity_decoder PRIVATE
         swresample-4
         avcodec-59
         avformat-59
-        )
+)
