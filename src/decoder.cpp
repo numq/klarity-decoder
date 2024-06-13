@@ -256,39 +256,17 @@ std::vector<uint8_t> Decoder::_processAudioFrame(const AVFrame &src) {
 
 void Decoder::_seekTo(long timestampMicros) {
     if (formatContext) {
-        avformat_seek_file(formatContext, -1, timestampMicros, timestampMicros, timestampMicros, AVSEEK_FLAG_ANY);
+        av_seek_frame(formatContext, -1, timestampMicros, AVSEEK_FLAG_ANY);
         if (audioCodecContext) avcodec_flush_buffers(audioCodecContext);
         if (videoCodecContext) avcodec_flush_buffers(videoCodecContext);
-//        if (audioStream) {
-//            const auto timestamp = static_cast<int64_t>(
-//                    std::round((double) timestampMicros * av_q2d(audioStream->time_base) * 1000000)
-//            );
-//            av_seek_frame(formatContext, audioStream->index, timestamp, AVSEEK_FLAG_ANY);
-//            if (audioCodecContext) avcodec_flush_buffers(audioCodecContext);
-//        }
-//        if (videoStream) {
-//            const auto timestamp = static_cast<int64_t>(
-//                    std::round((double) timestampMicros * av_q2d(videoStream->time_base) * 1000000)
-//            );
-//            av_seek_frame(formatContext, videoStream->index, timestamp, AVSEEK_FLAG_ANY);
-//            if (videoCodecContext) avcodec_flush_buffers(videoCodecContext);
-//        }
     }
 }
 
 void Decoder::_reset() {
     if (formatContext) {
-        avformat_seek_file(formatContext, -1, 0, 0, 0, AVSEEK_FLAG_BACKWARD);
+        av_seek_frame(formatContext, -1, 0, AVSEEK_FLAG_BACKWARD);
         if (audioCodecContext) avcodec_flush_buffers(audioCodecContext);
         if (videoCodecContext) avcodec_flush_buffers(videoCodecContext);
-//        if (audioStream) {
-//            av_seek_frame(formatContext, audioStream->index, 0, AVSEEK_FLAG_BACKWARD);
-//            if (audioCodecContext) avcodec_flush_buffers(audioCodecContext);
-//        }
-//        if (videoStream) {
-//            av_seek_frame(formatContext, videoStream->index, 0, AVSEEK_FLAG_BACKWARD);
-//            if (videoCodecContext) avcodec_flush_buffers(videoCodecContext);
-//        }
     }
 }
 
