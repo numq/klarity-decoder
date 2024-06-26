@@ -3,7 +3,6 @@
 Media *Decoder::_acquireMedia(uint64_t id) {
     auto it = mediaPool.find(id);
     if (it == mediaPool.end()) {
-        std::cerr << "Unable to find media with ID: " << id << std::endl;
         return nullptr;
     }
     return it->second;
