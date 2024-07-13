@@ -20,10 +20,8 @@ Decoder::~Decoder() {
     std::lock_guard<std::mutex> lock(mutex);
 
     for (auto &media: mediaPool) {
-        delete media.second;
+        _releaseMedia(media.first);
     }
-
-    mediaPool.clear();
 }
 
 bool Decoder::initialize(uint64_t id, const char *location, bool findAudioStream, bool findVideoStream) {
