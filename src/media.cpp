@@ -214,6 +214,7 @@ Media::Media(const char *location, bool findAudioStream, bool findVideoStream) {
     if (!audioStream && !videoStream) {
         std::cerr << "No valid streams found." << std::endl;
         avformat_free_context(formatContext);
+        formatContext = nullptr;
         return;
     }
 }
@@ -247,6 +248,10 @@ Media::~Media() {
 
 Frame *Media::nextFrame() {
     std::lock_guard<std::mutex> lock(mutex);
+
+    if (!format || !format->durationMicros) {
+        return nullptr;
+    }
 
     auto packet = av_packet_alloc();
 
@@ -299,21 +304,31 @@ Frame *Media::nextFrame() {
 void Media::seekTo(long timestampMicros) {
     std::lock_guard<std::mutex> lock(mutex);
 
-    if (av_seek_frame(formatContext, -1, timestampMicros, AVSEEK_FLAG_BACKWARD) < 0) {
-        std::cerr << "Error seeking to timestamp: " << timestampMicros << std::endl;
+    if (!format || !format->durationMicros) {
+        return;
     }
 
-    if (videoCodecContext) {
-        avcodec_flush_buffers(videoCodecContext);
-    }
+    if (0 < timestampMicros <= format->durationMicros) {
+        if (av_seek_frame(formatContext, -1, timestampMicros, AVSEEK_FLAG_BACKWARD) < 0) {
+            std::cerr << "Error seeking to timestamp: " << timestampMicros << std::endl;
+        }
 
-    if (audioCodecContext) {
-        avcodec_flush_buffers(audioCodecContext);
+        if (videoCodecContext) {
+            avcodec_flush_buffers(videoCodecContext);
+        }
+
+        if (audioCodecContext) {
+            avcodec_flush_buffers(audioCodecContext);
+        }
     }
 }
 
 void Media::reset() {
     std::lock_guard<std::mutex> lock(mutex);
+
+    if (!format || !format->durationMicros) {
+        return;
+    }
 
     if (av_seek_frame(formatContext, -1, 0, AVSEEK_FLAG_BACKWARD) < 0) {
         std::cerr << "Error resetting stream." << std::endl;
