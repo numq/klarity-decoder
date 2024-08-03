@@ -211,7 +211,7 @@ Media::Media(const char *location, bool findAudioStream, bool findVideoStream) {
         }
     }
 
-    if (!audioStream && !videoStream) {
+    if ((findAudioStream && !audioStream) && (findVideoStream && !videoStream)) {
         std::cerr << "No valid streams found." << std::endl;
         avformat_free_context(formatContext);
         formatContext = nullptr;
