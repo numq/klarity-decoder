@@ -3,6 +3,13 @@
 
 #define __STDC_CONSTANT_MACROS
 
+#include <mutex>
+#include <iostream>
+#include <unordered_map>
+#include "format.h"
+#include "frame.h"
+#include "media.h"
+
 extern "C" {
 #include "libavutil/imgutils.h"
 #include "libswresample/swresample.h"
@@ -10,13 +17,6 @@ extern "C" {
 #include "libavcodec/avcodec.h"
 #include "libavformat/avformat.h"
 }
-
-#include "format.h"
-#include "frame.h"
-#include "media.h"
-#include <mutex>
-#include <iostream>
-#include <unordered_map>
 
 class IDecoder {
 public:

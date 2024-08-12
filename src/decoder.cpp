@@ -3,7 +3,7 @@
 Media *Decoder::_acquireMedia(int64_t id) {
     auto it = mediaPool.find(id);
     if (it == mediaPool.end()) {
-        return nullptr;
+        throw MediaNotFoundException();
     }
     return it->second;
 }
@@ -11,7 +11,7 @@ Media *Decoder::_acquireMedia(int64_t id) {
 void Decoder::_releaseMedia(int64_t id) {
     auto it = mediaPool.find(id);
     if (it == mediaPool.end()) {
-        return;
+        throw MediaNotFoundException();
     }
 
     delete it->second;
@@ -30,8 +30,7 @@ bool Decoder::initialize(int64_t id, const char *location, bool findAudioStream,
     std::lock_guard<std::mutex> lock(mutex);
 
     if (mediaPool.find(id) != mediaPool.end()) {
-        std::cerr << "Media with the same id already exists." << std::endl;
-        return false;
+        throw MediaException("Media with the same id already exists");
     }
 
     auto media = new Media(location, findAudioStream, findVideoStream);
@@ -42,49 +41,25 @@ bool Decoder::initialize(int64_t id, const char *location, bool findAudioStream,
 Format *Decoder::getFormat(int64_t id) {
     std::lock_guard<std::mutex> lock(mutex);
 
-    auto media = _acquireMedia(id);
-    if (!media) {
-        std::cerr << "Unable to find media." << std::endl;
-        return nullptr;
-    }
-
-    return new Format(*media->format);
+    return _acquireMedia(id)->format;
 }
 
 Frame *Decoder::nextFrame(int64_t id) {
     std::lock_guard<std::mutex> lock(mutex);
 
-    auto media = _acquireMedia(id);
-    if (!media) {
-        std::cerr << "Unable to find media." << std::endl;
-        return nullptr;
-    }
-
-    return media->nextFrame();
+    return _acquireMedia(id)->nextFrame();
 }
 
 void Decoder::seekTo(int64_t id, long timestampMicros) {
     std::lock_guard<std::mutex> lock(mutex);
 
-    auto media = _acquireMedia(id);
-    if (!media) {
-        std::cerr << "Unable to find media." << std::endl;
-        return;
-    }
-
-    media->seekTo(timestampMicros);
+    _acquireMedia(id)->seekTo(timestampMicros);
 }
 
 void Decoder::reset(int64_t id) {
     std::lock_guard<std::mutex> lock(mutex);
 
-    auto media = _acquireMedia(id);
-    if (!media) {
-        std::cerr << "Unable to find media." << std::endl;
-        return;
-    }
-
-    media->reset();
+    _acquireMedia(id)->reset();
 }
 
 void Decoder::close(int64_t id) {

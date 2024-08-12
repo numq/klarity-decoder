@@ -2,8 +2,7 @@
 
 std::vector<uint8_t> Media::_processVideoFrame(const AVFrame &src) {
     if (format->width <= 0 || format->height <= 0) {
-        std::cerr << "Invalid format." << std::endl;
-        return {};
+        throw MediaException("Invalid video format");
     }
 
     auto dstWidth = static_cast<int>(format->width);
@@ -24,14 +23,12 @@ std::vector<uint8_t> Media::_processVideoFrame(const AVFrame &src) {
         );
 
         if (!swsContext) {
-            std::cerr << "Could not initialize the conversion context." << std::endl;
-            return {};
+            throw MediaException("Could not initialize the conversion context");
         }
 
         int bufferSize = av_image_get_buffer_size(dstFormat, dstWidth, dstHeight, 1);
         if (bufferSize < 0) {
-            std::cerr << "Could not get buffer size, error: " << bufferSize << std::endl;
-            return {};
+            throw MediaException("Could not get buffer size, error: " + std::to_string(bufferSize));
         }
 
         std::vector<uint8_t> output(bufferSize + AV_INPUT_BUFFER_PADDING_SIZE);
@@ -40,8 +37,7 @@ std::vector<uint8_t> Media::_processVideoFrame(const AVFrame &src) {
         av_image_fill_pointers(dst, dstFormat, dstHeight, output.data(), dstLinesize);
 
         if (sws_scale(swsContext, src.data, src.linesize, 0, src.height, dst, dstLinesize) < 0) {
-            std::cerr << "Error while converting the video frame." << std::endl;
-            return {};
+            throw MediaException("Error while converting the video frame");
         }
 
         return output;
@@ -56,8 +52,7 @@ std::vector<uint8_t> Media::_processVideoFrame(const AVFrame &src) {
 
 std::vector<uint8_t> Media::_processAudioFrame(const AVFrame &src) {
     if (format->sampleRate <= 0 || format->channels <= 0) {
-        std::cerr << "Invalid format." << std::endl;
-        return {};
+        throw MediaException("Invalid audio format.");
     }
 
     if (src.format != AV_SAMPLE_FMT_FLT) {
@@ -72,8 +67,7 @@ std::vector<uint8_t> Media::_processAudioFrame(const AVFrame &src) {
                 0, nullptr);
 
         if (!swrContext || swr_init(swrContext) < 0) {
-            std::cerr << "Could not initialize the resampling context." << std::endl;
-            return {};
+            throw MediaException("Could not initialize the resampling context");
         }
 
         auto output_samples = av_rescale_rnd(
@@ -93,8 +87,7 @@ std::vector<uint8_t> Media::_processAudioFrame(const AVFrame &src) {
         );
 
         if (converted_samples < 0) {
-            std::cerr << "Error while converting the audio frame." << std::endl;
-            return {};
+            throw MediaException("Error while converting the audio frame");
         }
 
         data.resize(converted_samples * src.channels * sizeof(float));
@@ -115,21 +108,18 @@ Media::Media(const char *location, bool findAudioStream, bool findVideoStream) {
     formatContext = avformat_alloc_context();
 
     if (!formatContext) {
-        std::cerr << "Could not allocate format context." << std::endl;
-        return;
+        throw MediaException("Could not allocate format context");
     }
 
     if (avformat_open_input(&formatContext, location, nullptr, nullptr) < 0) {
-        std::cerr << "Couldn't open input stream." << std::endl;
         avformat_free_context(formatContext);
         formatContext = nullptr;
-        return;
+        throw MediaException("Couldn't open input stream");
     }
 
     if (avformat_find_stream_info(formatContext, nullptr) < 0) {
-        std::cerr << "Couldn't find stream information." << std::endl;
         avformat_close_input(&formatContext);
-        return;
+        throw MediaException("Couldn't find stream information");
     }
 
     format = new Format(location, static_cast<uint64_t>(static_cast<double>(formatContext->duration) /
@@ -141,26 +131,26 @@ Media::Media(const char *location, bool findAudioStream, bool findVideoStream) {
                 audioStream = formatContext->streams[i];
                 auto codec = avcodec_find_decoder(audioStream->codecpar->codec_id);
                 if (!codec) {
-                    std::cerr << "Audio codec not found." << std::endl;
-                    continue;
+                    throw MediaException("Audio codec not found");
+//                    continue;
                 }
 
                 audioCodecContext = avcodec_alloc_context3(codec);
                 if (!audioCodecContext) {
-                    std::cerr << "Could not allocate audio codec context." << std::endl;
-                    continue;
+                    throw MediaException("Could not allocate audio codec context");
+//                    continue;
                 }
 
                 if (avcodec_parameters_to_context(audioCodecContext, audioStream->codecpar) < 0) {
-                    std::cerr << "Could not copy audio codec parameters to context." << std::endl;
                     avcodec_free_context(&audioCodecContext);
-                    continue;
+                    throw MediaException("Could not copy audio codec parameters to context");
+//                    continue;
                 }
 
                 if (avcodec_open2(audioCodecContext, codec, nullptr) < 0) {
-                    std::cerr << "Could not open audio codec." << std::endl;
                     avcodec_free_context(&audioCodecContext);
-                    continue;
+                    throw MediaException("Could not open audio codec");
+//                    continue;
                 }
 
                 format->sampleRate = audioCodecContext->sample_rate;
@@ -178,26 +168,26 @@ Media::Media(const char *location, bool findAudioStream, bool findVideoStream) {
 
                 auto codec = avcodec_find_decoder(videoStream->codecpar->codec_id);
                 if (!codec) {
-                    std::cerr << "Video codec not found." << std::endl;
-                    continue;
+                    throw MediaException("Video codec not found");
+//                    continue;
                 }
 
                 videoCodecContext = avcodec_alloc_context3(codec);
                 if (!videoCodecContext) {
-                    std::cerr << "Could not allocate video codec context." << std::endl;
-                    continue;
+                    throw MediaException("Could not allocate video codec context");
+//                    continue;
                 }
 
                 if (avcodec_parameters_to_context(videoCodecContext, videoStream->codecpar) < 0) {
-                    std::cerr << "Could not copy video codec parameters to context." << std::endl;
                     avcodec_free_context(&videoCodecContext);
-                    continue;
+                    throw MediaException("Could not copy video codec parameters to context");
+//                    continue;
                 }
 
                 if (avcodec_open2(videoCodecContext, codec, nullptr) < 0) {
-                    std::cerr << "Could not open video codec." << std::endl;
                     avcodec_free_context(&videoCodecContext);
-                    continue;
+                    throw MediaException("Could not open video codec");
+//                    continue;
                 }
 
                 format->width = videoCodecContext->width;
@@ -212,10 +202,9 @@ Media::Media(const char *location, bool findAudioStream, bool findVideoStream) {
     }
 
     if ((findAudioStream && !audioStream) && (findVideoStream && !videoStream)) {
-        std::cerr << "No valid streams found." << std::endl;
         avformat_free_context(formatContext);
         formatContext = nullptr;
-        return;
+        throw MediaException("No valid streams found");
     }
 }
 
@@ -256,8 +245,7 @@ Frame *Media::nextFrame() {
     auto packet = av_packet_alloc();
 
     if (!packet) {
-        std::cerr << "Could not initialize the conversion context." << std::endl;
-        return nullptr;
+        throw MediaException("Could not initialize the conversion context");
     }
 
     while (av_read_frame(formatContext, packet) == 0) {
@@ -310,7 +298,7 @@ void Media::seekTo(long timestampMicros) {
 
     if (0 < timestampMicros <= format->durationMicros) {
         if (av_seek_frame(formatContext, -1, timestampMicros, AVSEEK_FLAG_BACKWARD) < 0) {
-            std::cerr << "Error seeking to timestamp: " << timestampMicros << std::endl;
+            throw MediaException("Error seeking to timestamp: " + std::to_string(timestampMicros));
         }
 
         if (videoCodecContext) {
@@ -331,7 +319,7 @@ void Media::reset() {
     }
 
     if (av_seek_frame(formatContext, -1, 0, AVSEEK_FLAG_BACKWARD) < 0) {
-        std::cerr << "Error resetting stream." << std::endl;
+        throw MediaException("Error resetting stream");
     }
 
     if (videoCodecContext) {
