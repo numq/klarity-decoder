@@ -52,7 +52,7 @@ std::vector<uint8_t> Media::_processVideoFrame(const AVFrame &src) {
 
 std::vector<uint8_t> Media::_processAudioFrame(const AVFrame &src) {
     if (format->sampleRate <= 0 || format->channels <= 0) {
-        throw MediaException("Invalid audio format.");
+        throw MediaException("Invalid audio format");
     }
 
     if (src.format != AV_SAMPLE_FMT_FLT) {
@@ -106,7 +106,6 @@ Media::Media(const char *location, bool findAudioStream, bool findVideoStream) {
     std::lock_guard<std::mutex> lock(mutex);
 
     formatContext = avformat_alloc_context();
-
     if (!formatContext) {
         throw MediaException("Could not allocate format context");
     }
@@ -122,8 +121,10 @@ Media::Media(const char *location, bool findAudioStream, bool findVideoStream) {
         throw MediaException("Couldn't find stream information");
     }
 
-    format = new Format(location, static_cast<uint64_t>(static_cast<double>(formatContext->duration) /
-                                                        (av_q2d(AV_TIME_BASE_Q) * 1000000)));
+    format = new Format(
+            location,
+            static_cast<uint64_t>(static_cast<double>(formatContext->duration) / (av_q2d(AV_TIME_BASE_Q) * 1000000))
+    );
 
     if (findAudioStream) {
         for (unsigned i = 0; i < formatContext->nb_streams; i++) {
@@ -132,25 +133,21 @@ Media::Media(const char *location, bool findAudioStream, bool findVideoStream) {
                 auto codec = avcodec_find_decoder(audioStream->codecpar->codec_id);
                 if (!codec) {
                     throw MediaException("Audio codec not found");
-//                    continue;
                 }
 
                 audioCodecContext = avcodec_alloc_context3(codec);
                 if (!audioCodecContext) {
                     throw MediaException("Could not allocate audio codec context");
-//                    continue;
                 }
 
                 if (avcodec_parameters_to_context(audioCodecContext, audioStream->codecpar) < 0) {
                     avcodec_free_context(&audioCodecContext);
                     throw MediaException("Could not copy audio codec parameters to context");
-//                    continue;
                 }
 
                 if (avcodec_open2(audioCodecContext, codec, nullptr) < 0) {
                     avcodec_free_context(&audioCodecContext);
                     throw MediaException("Could not open audio codec");
-//                    continue;
                 }
 
                 format->sampleRate = audioCodecContext->sample_rate;
@@ -169,25 +166,21 @@ Media::Media(const char *location, bool findAudioStream, bool findVideoStream) {
                 auto codec = avcodec_find_decoder(videoStream->codecpar->codec_id);
                 if (!codec) {
                     throw MediaException("Video codec not found");
-//                    continue;
                 }
 
                 videoCodecContext = avcodec_alloc_context3(codec);
                 if (!videoCodecContext) {
                     throw MediaException("Could not allocate video codec context");
-//                    continue;
                 }
 
                 if (avcodec_parameters_to_context(videoCodecContext, videoStream->codecpar) < 0) {
                     avcodec_free_context(&videoCodecContext);
                     throw MediaException("Could not copy video codec parameters to context");
-//                    continue;
                 }
 
                 if (avcodec_open2(videoCodecContext, codec, nullptr) < 0) {
                     avcodec_free_context(&videoCodecContext);
                     throw MediaException("Could not open video codec");
-//                    continue;
                 }
 
                 format->width = videoCodecContext->width;
@@ -238,8 +231,8 @@ Media::~Media() {
 Frame *Media::nextFrame() {
     std::lock_guard<std::mutex> lock(mutex);
 
-    if (!format || !format->durationMicros) {
-        return nullptr;
+    if (!format) {
+        throw MediaException("Unable to use uninitialized decoder");
     }
 
     auto packet = av_packet_alloc();
@@ -292,8 +285,8 @@ Frame *Media::nextFrame() {
 void Media::seekTo(long timestampMicros) {
     std::lock_guard<std::mutex> lock(mutex);
 
-    if (!format || !format->durationMicros) {
-        return;
+    if (!format) {
+        throw MediaException("Unable to use uninitialized decoder");
     }
 
     if (0 < timestampMicros <= format->durationMicros) {
@@ -314,8 +307,8 @@ void Media::seekTo(long timestampMicros) {
 void Media::reset() {
     std::lock_guard<std::mutex> lock(mutex);
 
-    if (!format || !format->durationMicros) {
-        return;
+    if (!format) {
+        throw MediaException("Unable to use uninitialized decoder");
     }
 
     if (av_seek_frame(formatContext, -1, 0, AVSEEK_FLAG_BACKWARD) < 0) {

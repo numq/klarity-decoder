@@ -26,7 +26,7 @@ Decoder::~Decoder() {
     }
 }
 
-bool Decoder::initialize(int64_t id, const char *location, bool findAudioStream, bool findVideoStream) {
+void Decoder::initialize(int64_t id, const char *location, bool findAudioStream, bool findVideoStream) {
     std::lock_guard<std::mutex> lock(mutex);
 
     if (mediaPool.find(id) != mediaPool.end()) {
@@ -35,7 +35,6 @@ bool Decoder::initialize(int64_t id, const char *location, bool findAudioStream,
 
     auto media = new Media(location, findAudioStream, findVideoStream);
     mediaPool.emplace(id, media);
-    return true;
 }
 
 Format *Decoder::getFormat(int64_t id) {
