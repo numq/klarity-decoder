@@ -26,7 +26,7 @@ public:
 
     virtual Format *getFormat(int64_t id) = 0;
 
-    virtual Frame *nextFrame(int64_t id) = 0;
+    virtual Frame *nextFrame(int64_t id, int64_t width, int64_t height) = 0;
 
     virtual void seekTo(int64_t id, long timestampMicros) = 0;
 
@@ -51,7 +51,7 @@ public:
 
     Format *getFormat(int64_t id) override;
 
-    Frame *nextFrame(int64_t id) override;
+    Frame *nextFrame(int64_t id, int64_t width, int64_t height) override;
 
     void seekTo(int64_t id, long timestampMicros) override;
 

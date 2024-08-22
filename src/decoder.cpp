@@ -43,10 +43,10 @@ Format *Decoder::getFormat(int64_t id) {
     return _acquireMedia(id)->format;
 }
 
-Frame *Decoder::nextFrame(int64_t id) {
+Frame *Decoder::nextFrame(int64_t id, int64_t width, int64_t height) {
     std::lock_guard<std::mutex> lock(mutex);
 
-    return _acquireMedia(id)->nextFrame();
+    return _acquireMedia(id)->nextFrame(width, height);
 }
 
 void Decoder::seekTo(int64_t id, long timestampMicros) {

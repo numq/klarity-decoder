@@ -1,12 +1,13 @@
 #include "media.h"
 
-std::vector<uint8_t> Media::_processVideoFrame(const AVFrame &src) {
+std::vector<uint8_t> Media::_processVideoFrame(const AVFrame &src, int64_t width, int64_t height) {
     if (format->width <= 0 || format->height <= 0) {
         throw MediaException("Invalid video format");
     }
 
-    auto dstWidth = static_cast<int>(format->width);
-    auto dstHeight = static_cast<int>(format->height);
+    auto dstWidth = static_cast<int>(width > 0 && width <= format->width ? width : format->width);
+    auto dstHeight = static_cast<int>(height > 0 && height <= format->height ? height : format->height);
+
     auto srcFormat = static_cast<AVPixelFormat>(src.format);
     auto dstFormat = AV_PIX_FMT_RGB565;
 
@@ -228,7 +229,7 @@ Media::~Media() {
     delete format;
 }
 
-Frame *Media::nextFrame() {
+Frame *Media::nextFrame(int64_t width, int64_t height) {
     std::lock_guard<std::mutex> lock(mutex);
 
     if (!format) {
@@ -238,7 +239,7 @@ Frame *Media::nextFrame() {
     auto packet = av_packet_alloc();
 
     if (!packet) {
-        throw MediaException("Could not initialize the conversion context");
+        throw MediaException("Could not allocate packet");
     }
 
     while (av_read_frame(formatContext, packet) == 0) {
@@ -263,7 +264,7 @@ Frame *Media::nextFrame() {
                 avcodec_send_packet(videoCodecContext, packet);
                 AVFrame *frame = av_frame_alloc();
                 if (avcodec_receive_frame(videoCodecContext, frame) == 0) {
-                    std::vector<uint8_t> data = _processVideoFrame(*frame);
+                    std::vector<uint8_t> data = _processVideoFrame(*frame, width, height);
                     const auto timestampMicros = static_cast<int64_t>(
                             std::round((double) frame->best_effort_timestamp * av_q2d(videoStream->time_base) * 1000000)
                     );
@@ -290,16 +291,21 @@ void Media::seekTo(long timestampMicros) {
     }
 
     if (0 < timestampMicros <= format->durationMicros) {
-        if (av_seek_frame(formatContext, -1, timestampMicros, AVSEEK_FLAG_BACKWARD) < 0) {
+        if (av_seek_frame(
+                formatContext,
+                -1,
+                timestampMicros,
+                AVSEEK_FLAG_BACKWARD | AVSEEK_FLAG_ANY | AVSEEK_FLAG_FRAME
+        ) < 0) {
             throw MediaException("Error seeking to timestamp: " + std::to_string(timestampMicros));
-        }
-
-        if (videoCodecContext) {
-            avcodec_flush_buffers(videoCodecContext);
         }
 
         if (audioCodecContext) {
             avcodec_flush_buffers(audioCodecContext);
+        }
+
+        if (videoCodecContext) {
+            avcodec_flush_buffers(videoCodecContext);
         }
     }
 }
@@ -315,11 +321,11 @@ void Media::reset() {
         throw MediaException("Error resetting stream");
     }
 
-    if (videoCodecContext) {
-        avcodec_flush_buffers(videoCodecContext);
-    }
-
     if (audioCodecContext) {
         avcodec_flush_buffers(audioCodecContext);
+    }
+
+    if (videoCodecContext) {
+        avcodec_flush_buffers(videoCodecContext);
     }
 }
