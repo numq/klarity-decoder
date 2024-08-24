@@ -1,56 +1,5 @@
 #include "media.h"
 
-std::vector<uint8_t> Media::_processVideoFrame(const AVFrame &src, int64_t width, int64_t height) {
-    if (format->width <= 0 || format->height <= 0) {
-        throw MediaException("Invalid video format");
-    }
-
-    auto dstWidth = static_cast<int>(width > 0 && width <= format->width ? width : format->width);
-    auto dstHeight = static_cast<int>(height > 0 && height <= format->height ? height : format->height);
-
-    auto srcFormat = static_cast<AVPixelFormat>(src.format);
-    auto dstFormat = AV_PIX_FMT_RGB565;
-
-    int dstLinesize[3];
-    av_image_fill_linesizes(dstLinesize, dstFormat, dstWidth);
-
-    if (src.width != dstWidth || src.height != dstHeight || src.format != dstFormat) {
-        swsContext = sws_getCachedContext(
-                swsContext,
-                src.width, src.height, srcFormat,
-                dstWidth, dstHeight, dstFormat,
-                SWS_BICUBIC,
-                nullptr, nullptr, nullptr
-        );
-
-        if (!swsContext) {
-            throw MediaException("Could not initialize the conversion context");
-        }
-
-        int bufferSize = av_image_get_buffer_size(dstFormat, dstWidth, dstHeight, 1);
-        if (bufferSize < 0) {
-            throw MediaException("Could not get buffer size, error: " + std::to_string(bufferSize));
-        }
-
-        std::vector<uint8_t> output(bufferSize + AV_INPUT_BUFFER_PADDING_SIZE);
-
-        uint8_t *dst[3] = {nullptr};
-        av_image_fill_pointers(dst, dstFormat, dstHeight, output.data(), dstLinesize);
-
-        if (sws_scale(swsContext, src.data, src.linesize, 0, src.height, dst, dstLinesize) < 0) {
-            throw MediaException("Error while converting the video frame");
-        }
-
-        return output;
-    }
-
-    std::vector<uint8_t> output(src.linesize[0] * src.height);
-
-    memcpy(output.data(), src.data[0], src.linesize[0] * src.height);
-
-    return output;
-}
-
 std::vector<uint8_t> Media::_processAudioFrame(const AVFrame &src) {
     if (format->sampleRate <= 0 || format->channels <= 0) {
         throw MediaException("Invalid audio format");
@@ -103,6 +52,57 @@ std::vector<uint8_t> Media::_processAudioFrame(const AVFrame &src) {
     return output;
 }
 
+std::vector<uint8_t> Media::_processVideoFrame(const AVFrame &src, int64_t width, int64_t height) {
+    if (format->width <= 0 || format->height <= 0) {
+        throw MediaException("Invalid video format");
+    }
+
+    auto dstWidth = static_cast<int>(width > 0 && width <= format->width ? width : format->width);
+    auto dstHeight = static_cast<int>(height > 0 && height <= format->height ? height : format->height);
+
+    auto srcFormat = static_cast<AVPixelFormat>(src.format);
+    auto dstFormat = AV_PIX_FMT_RGB565;
+
+    int dstLinesize[3];
+    av_image_fill_linesizes(dstLinesize, dstFormat, dstWidth);
+
+    if (src.width != dstWidth || src.height != dstHeight || src.format != dstFormat) {
+        swsContext = sws_getCachedContext(
+                swsContext,
+                src.width, src.height, srcFormat,
+                dstWidth, dstHeight, dstFormat,
+                SWS_BICUBIC,
+                nullptr, nullptr, nullptr
+        );
+
+        if (!swsContext) {
+            throw MediaException("Could not initialize the conversion context");
+        }
+
+        int bufferSize = av_image_get_buffer_size(dstFormat, dstWidth, dstHeight, 1);
+        if (bufferSize < 0) {
+            throw MediaException("Could not get buffer size, error: " + std::to_string(bufferSize));
+        }
+
+        std::vector<uint8_t> output(bufferSize + AV_INPUT_BUFFER_PADDING_SIZE);
+
+        uint8_t *dst[3] = {nullptr};
+        av_image_fill_pointers(dst, dstFormat, dstHeight, output.data(), dstLinesize);
+
+        if (sws_scale(swsContext, src.data, src.linesize, 0, src.height, dst, dstLinesize) < 0) {
+            throw MediaException("Error while converting the video frame");
+        }
+
+        return output;
+    }
+
+    std::vector<uint8_t> output(src.linesize[0] * src.height);
+
+    memcpy(output.data(), src.data[0], src.linesize[0] * src.height);
+
+    return output;
+}
+
 Media::Media(const char *location, bool findAudioStream, bool findVideoStream) {
     std::lock_guard<std::mutex> lock(mutex);
 
@@ -122,10 +122,7 @@ Media::Media(const char *location, bool findAudioStream, bool findVideoStream) {
         throw MediaException("Couldn't find stream information");
     }
 
-    format = new Format(
-            location,
-            static_cast<uint64_t>(static_cast<double>(formatContext->duration) / (av_q2d(AV_TIME_BASE_Q) * 1000000))
-    );
+    format = new Format(location, av_rescale_q(formatContext->duration, AV_TIME_BASE_Q, (AVRational) {1, 1000000}));
 
     if (findAudioStream) {
         for (unsigned i = 0; i < formatContext->nb_streams; i++) {
@@ -283,20 +280,102 @@ Frame *Media::nextFrame(int64_t width, int64_t height) {
     return nullptr;
 }
 
-void Media::seekTo(long timestampMicros) {
+/*void Media::seekTo(long timestampMicros, bool keyframesOnly) {
     std::lock_guard<std::mutex> lock(mutex);
 
     if (!format) {
         throw MediaException("Unable to use uninitialized decoder");
     }
 
-    if (0 < timestampMicros <= format->durationMicros) {
-        if (av_seek_frame(
-                formatContext,
-                -1,
-                timestampMicros,
-                AVSEEK_FLAG_BACKWARD | AVSEEK_FLAG_ANY | AVSEEK_FLAG_FRAME
-        ) < 0) {
+    if (0 <= timestampMicros && timestampMicros <= format->durationMicros) {
+        int ret = av_seek_frame(formatContext, -1, timestampMicros, AVSEEK_FLAG_BACKWARD);
+        if (ret < 0) {
+            throw MediaException("Error seeking to timestamp: " + std::to_string(timestampMicros));
+        }
+
+        std::cout << timestampMicros << std::endl;
+
+        if (audioCodecContext) {
+            avcodec_flush_buffers(audioCodecContext);
+        }
+        if (videoCodecContext) {
+            avcodec_flush_buffers(videoCodecContext);
+        }
+
+        if (!keyframesOnly) {
+            auto packet = av_packet_alloc();
+
+            auto frame = av_frame_alloc();
+
+            int64_t lastAudioTimestamp = 0;
+            int64_t lastVideoTimestamp = 0;
+            bool found = false;
+            while (av_read_frame(formatContext, packet) >= 0) {
+                if (audioCodecContext && audioStream && packet->stream_index == audioStream->index) {
+                    avcodec_send_packet(audioCodecContext, packet);
+
+                    while (avcodec_receive_frame(audioCodecContext, frame) == 0) {
+                        int64_t pts = av_rescale_q(frame->best_effort_timestamp, audioStream->time_base,
+                                                   AV_TIME_BASE_Q);
+                        if (pts > timestampMicros) {
+                            found = true;
+                            std::cout << "pts: " << pts << std::endl;
+                            break;
+                        } else {
+                            lastAudioTimestamp = pts;
+                        }
+                    }
+                } else if (videoCodecContext && videoStream && packet->stream_index == videoStream->index) {
+                    avcodec_send_packet(videoCodecContext, packet);
+
+                    while (avcodec_receive_frame(videoCodecContext, frame) == 0) {
+                        int64_t pts = av_rescale_q(frame->best_effort_timestamp, videoStream->time_base,
+                                                   AV_TIME_BASE_Q);
+                        if (pts > timestampMicros) {
+                            std::cout << "pts: " << pts << std::endl;
+                            found = true;
+                            break;
+                        } else {
+                            lastVideoTimestamp = pts;
+                        }
+                    }
+                }
+
+                av_packet_unref(packet);
+
+                if (found) break;
+            }
+
+            av_frame_free(&frame);
+
+            av_packet_free(&packet);
+
+            if (audioCodecContext && lastAudioTimestamp > 0) {
+                if (av_seek_frame(formatContext, audioStream->index, lastAudioTimestamp, AVSEEK_FLAG_ANY) < 0) {
+                    throw MediaException("Error re-seeking to audio timestamp: " + std::to_string(lastAudioTimestamp));
+                }
+                avcodec_flush_buffers(audioCodecContext);
+            }
+            if (videoCodecContext && lastVideoTimestamp > 0) {
+                if (av_seek_frame(formatContext, videoStream->index, lastVideoTimestamp, AVSEEK_FLAG_ANY) < 0) {
+                    throw MediaException("Error re-seeking to video timestamp: " + std::to_string(lastVideoTimestamp));
+                }
+                avcodec_flush_buffers(videoCodecContext);
+            }
+        }
+    }
+}*/
+
+void Media::seekTo(long timestampMicros, bool keyframesOnly) {
+    std::lock_guard<std::mutex> lock(mutex);
+
+    if (!format) {
+        throw MediaException("Unable to use uninitialized decoder");
+    }
+
+    if (0 <= timestampMicros && timestampMicros <= format->durationMicros) {
+        int ret = av_seek_frame(formatContext, -1, timestampMicros, AVSEEK_FLAG_BACKWARD);
+        if (ret < 0) {
             throw MediaException("Error seeking to timestamp: " + std::to_string(timestampMicros));
         }
 
@@ -306,6 +385,55 @@ void Media::seekTo(long timestampMicros) {
 
         if (videoCodecContext) {
             avcodec_flush_buffers(videoCodecContext);
+        }
+
+        if (!keyframesOnly) {
+            auto packet = av_packet_alloc();
+
+            auto frame = av_frame_alloc();
+
+            if (!packet || !frame) {
+                if (packet) av_packet_free(&packet);
+                if (frame) av_frame_free(&frame);
+                throw MediaException("Error allocating packet or frame");
+            }
+
+            bool found = false;
+            int maxFrames = 100;
+
+            while (maxFrames-- > 0 && av_read_frame(formatContext, packet) >= 0) {
+                if (audioCodecContext && audioStream && packet->stream_index == audioStream->index) {
+                    avcodec_send_packet(audioCodecContext, packet);
+
+                    while (avcodec_receive_frame(audioCodecContext, frame) == 0) {
+                        int64_t pts = av_rescale_q(frame->best_effort_timestamp, audioStream->time_base,
+                                                   AV_TIME_BASE_Q);
+                        if (pts > timestampMicros) {
+                            found = true;
+                            break;
+                        }
+                    }
+                } else if (videoCodecContext && videoStream && packet->stream_index == videoStream->index) {
+                    avcodec_send_packet(videoCodecContext, packet);
+
+                    while (avcodec_receive_frame(videoCodecContext, frame) == 0) {
+                        int64_t pts = av_rescale_q(frame->best_effort_timestamp, videoStream->time_base,
+                                                   AV_TIME_BASE_Q);
+                        if (pts > timestampMicros) {
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+
+                av_packet_unref(packet);
+
+                if (found) break;
+            }
+
+            av_frame_free(&frame);
+
+            av_packet_free(&packet);
         }
     }
 }
@@ -317,7 +445,7 @@ void Media::reset() {
         throw MediaException("Unable to use uninitialized decoder");
     }
 
-    if (av_seek_frame(formatContext, -1, 0, AVSEEK_FLAG_BACKWARD) < 0) {
+    if (av_seek_frame(formatContext, -1, 0, AVSEEK_FLAG_FRAME) < 0) {
         throw MediaException("Error resetting stream");
     }
 

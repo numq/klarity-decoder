@@ -49,10 +49,10 @@ Frame *Decoder::nextFrame(int64_t id, int64_t width, int64_t height) {
     return _acquireMedia(id)->nextFrame(width, height);
 }
 
-void Decoder::seekTo(int64_t id, long timestampMicros) {
+void Decoder::seekTo(int64_t id, long timestampMicros, bool keyframesOnly) {
     std::lock_guard<std::mutex> lock(mutex);
 
-    _acquireMedia(id)->seekTo(timestampMicros);
+    _acquireMedia(id)->seekTo(timestampMicros, keyframesOnly);
 }
 
 void Decoder::reset(int64_t id) {
