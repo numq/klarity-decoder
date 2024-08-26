@@ -6,7 +6,6 @@ set(CMAKE_CXX_STANDARD 23)
 add_library(klarity_decoder SHARED
         src/format.cpp
         src/frame.cpp
-        src/media.cpp
         src/decoder.cpp
 )
 

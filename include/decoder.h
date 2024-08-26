@@ -3,12 +3,12 @@
 
 #define __STDC_CONSTANT_MACROS
 
+#include <string>
 #include <mutex>
 #include <iostream>
-#include <unordered_map>
-#include "format.h"
 #include "frame.h"
-#include "media.h"
+#include "format.h"
+#include "exception.h"
 
 extern "C" {
 #include "libavutil/imgutils.h"
@@ -18,46 +18,32 @@ extern "C" {
 #include "libavformat/avformat.h"
 }
 
-class IDecoder {
-public:
-    virtual ~IDecoder() = default;
-
-    virtual void initialize(int64_t id, const char *location, bool findAudioStream, bool findVideoStream) = 0;
-
-    virtual Format *getFormat(int64_t id) = 0;
-
-    virtual Frame *nextFrame(int64_t id, int64_t width, int64_t height) = 0;
-
-    virtual void seekTo(int64_t id, long timestampMicros, bool keyFramesOnly) = 0;
-
-    virtual void reset(int64_t id) = 0;
-
-    virtual void close(int64_t id) = 0;
-};
-
-class Decoder : public IDecoder {
-private:
+struct Decoder {
     std::mutex mutex;
-    std::unordered_map<int64_t, Media *> mediaPool{};
+    Format *format;
+    AVFormatContext *formatContext;
+    AVCodecContext *audioCodecContext = nullptr;
+    AVCodecContext *videoCodecContext = nullptr;
+    AVStream *audioStream = nullptr;
+    AVStream *videoStream = nullptr;
+    SwsContext *swsContext = nullptr;
+    SwrContext *swrContext = nullptr;
 
-    Media *_acquireMedia(int64_t id);
+private:
+    std::vector<uint8_t> _processVideoFrame(const AVFrame &src, int64_t width, int64_t height);
 
-    void _releaseMedia(int64_t id);
+    std::vector<uint8_t> _processAudioFrame(const AVFrame &src);
 
 public:
-    ~Decoder() override;
+    explicit Decoder(const char *location, bool findAudioStream, bool findVideoStream);
 
-    void initialize(int64_t id, const char *location, bool findAudioStream, bool findVideoStream) override;
+    ~Decoder();
 
-    Format *getFormat(int64_t id) override;
+    Frame *nextFrame(int64_t width, int64_t height);
 
-    Frame *nextFrame(int64_t id, int64_t width, int64_t height) override;
+    void seekTo(long timestampMicros, bool keyframesOnly);
 
-    void seekTo(int64_t id, long timestampMicros, bool keyframesOnly) override;
-
-    void reset(int64_t id) override;
-
-    void close(int64_t id) override;
+    void reset();
 };
 
 #endif //KLARITY_DECODER_DECODER_H
