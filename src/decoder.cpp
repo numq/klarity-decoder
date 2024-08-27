@@ -105,7 +105,7 @@ std::vector<uint8_t> Decoder::_processVideoFrame(const AVFrame &src, int64_t wid
 }
 
 Decoder::Decoder(const char *location, bool findAudioStream, bool findVideoStream) {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::lock_guard<std::shared_mutex> lock(mutex);
 
     formatContext = avformat_alloc_context();
     if (!formatContext) {
@@ -117,6 +117,8 @@ Decoder::Decoder(const char *location, bool findAudioStream, bool findVideoStrea
         formatContext = nullptr;
         throw DecoderException("Couldn't open input stream");
     }
+
+    formatContext->flags = AVFMT_SEEK_TO_PTS;
 
     if (avformat_find_stream_info(formatContext, nullptr) < 0) {
         avformat_close_input(&formatContext);
@@ -201,7 +203,7 @@ Decoder::Decoder(const char *location, bool findAudioStream, bool findVideoStrea
 }
 
 Decoder::~Decoder() {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::lock_guard<std::shared_mutex> lock(mutex);
 
     if (audioCodecContext) {
         avcodec_free_context(&audioCodecContext);
@@ -228,7 +230,7 @@ Decoder::~Decoder() {
 }
 
 Frame *Decoder::nextFrame(int64_t width, int64_t height) {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::lock_guard<std::shared_mutex> lock(mutex);
 
     if (!format) {
         throw DecoderException("Unable to use uninitialized decoder");
@@ -286,7 +288,7 @@ Frame *Decoder::nextFrame(int64_t width, int64_t height) {
 }
 
 void Decoder::seekTo(long timestampMicros, bool keyframesOnly) {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::lock_guard<std::shared_mutex> lock(mutex);
 
     if (!format) {
         throw DecoderException("Unable to use uninitialized decoder");
@@ -309,7 +311,7 @@ void Decoder::seekTo(long timestampMicros, bool keyframesOnly) {
         avcodec_flush_buffers(videoCodecContext);
     }
 
-    if (!keyframesOnly && timestampMicros > 0 && timestampMicros < format->durationMicros) {
+    if (!keyframesOnly) {
         auto packet = av_packet_alloc();
         auto frame = av_frame_alloc();
 
@@ -323,14 +325,19 @@ void Decoder::seekTo(long timestampMicros, bool keyframesOnly) {
 
         int64_t maxFrames = 0;
 
-        if (audioStream) {
-            maxFrames = std::max(static_cast<int64_t>(static_cast<double>(timestampMicros + 1) /
+        int64_t audioTimestamp = (audioStream) ? av_rescale_q(timestampMicros, AV_TIME_BASE_Q, audioStream->time_base)
+                                               : 0;
+        int64_t videoTimestamp = (videoStream) ? av_rescale_q(timestampMicros, AV_TIME_BASE_Q, videoStream->time_base)
+                                               : 0;
+
+        if (audioCodecContext && audioStream) {
+            maxFrames = std::max(static_cast<int64_t>(static_cast<double>(timestampMicros) /
                                                       (static_cast<double>(format->durationMicros) /
                                                        static_cast<double>(audioStream->nb_frames))), maxFrames);
         }
 
-        if (videoStream) {
-            maxFrames = std::max(static_cast<int64_t>(static_cast<double>(timestampMicros + 1) /
+        if (videoCodecContext && videoStream) {
+            maxFrames = std::max(static_cast<int64_t>(static_cast<double>(timestampMicros) /
                                                       (static_cast<double>(format->durationMicros) /
                                                        static_cast<double>(videoStream->nb_frames))), maxFrames);
         }
@@ -340,9 +347,7 @@ void Decoder::seekTo(long timestampMicros, bool keyframesOnly) {
                 avcodec_send_packet(audioCodecContext, packet);
 
                 while (avcodec_receive_frame(audioCodecContext, frame) == 0) {
-                    int64_t pts = av_rescale_q(frame->best_effort_timestamp, audioStream->time_base,
-                                               AV_TIME_BASE_Q);
-                    if (pts >= timestampMicros) {
+                    if (frame->best_effort_timestamp >= audioTimestamp) {
                         found = true;
                         break;
                     }
@@ -351,9 +356,7 @@ void Decoder::seekTo(long timestampMicros, bool keyframesOnly) {
                 avcodec_send_packet(videoCodecContext, packet);
 
                 while (avcodec_receive_frame(videoCodecContext, frame) == 0) {
-                    int64_t pts = av_rescale_q(frame->best_effort_timestamp, videoStream->time_base,
-                                               AV_TIME_BASE_Q);
-                    if (pts >= timestampMicros) {
+                    if (frame->best_effort_timestamp >= videoTimestamp) {
                         found = true;
                         break;
                     }
@@ -367,15 +370,11 @@ void Decoder::seekTo(long timestampMicros, bool keyframesOnly) {
 
         av_frame_free(&frame);
         av_packet_free(&packet);
-
-        if (!found) {
-            throw DecoderException("Error seeking to timestamp: " + std::to_string(timestampMicros));
-        }
     }
 }
 
 void Decoder::reset() {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::lock_guard<std::shared_mutex> lock(mutex);
 
     if (!format) {
         throw DecoderException("Unable to use uninitialized decoder");

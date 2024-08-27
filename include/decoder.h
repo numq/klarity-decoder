@@ -4,7 +4,7 @@
 #define __STDC_CONSTANT_MACROS
 
 #include <string>
-#include <mutex>
+#include <shared_mutex>
 #include <iostream>
 #include "frame.h"
 #include "format.h"
@@ -19,7 +19,7 @@ extern "C" {
 }
 
 struct Decoder {
-    std::mutex mutex;
+    std::shared_mutex mutex;
     Format *format;
     AVFormatContext *formatContext;
     AVCodecContext *audioCodecContext = nullptr;
