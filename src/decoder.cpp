@@ -62,7 +62,7 @@ std::vector<uint8_t> Decoder::_processVideoFrame(const AVFrame &src, int64_t wid
     auto dstHeight = static_cast<int>(height > 0 && height <= format->height ? height : format->height);
 
     auto srcFormat = static_cast<AVPixelFormat>(src.format);
-    auto dstFormat = AV_PIX_FMT_RGB565;
+    auto dstFormat = AV_PIX_FMT_RGBA;
 
     int dstLinesize[3];
     av_image_fill_linesizes(dstLinesize, dstFormat, dstWidth);
@@ -72,7 +72,7 @@ std::vector<uint8_t> Decoder::_processVideoFrame(const AVFrame &src, int64_t wid
                 swsContext,
                 src.width, src.height, srcFormat,
                 dstWidth, dstHeight, dstFormat,
-                SWS_BICUBIC,
+                SWS_BILINEAR,
                 nullptr, nullptr, nullptr
         );
 
@@ -106,6 +106,8 @@ std::vector<uint8_t> Decoder::_processVideoFrame(const AVFrame &src, int64_t wid
 
 Decoder::Decoder(const char *location, bool findAudioStream, bool findVideoStream) {
     std::lock_guard<std::shared_mutex> lock(mutex);
+
+    av_log_set_level(AV_LOG_QUIET);
 
     formatContext = avformat_alloc_context();
     if (!formatContext) {
