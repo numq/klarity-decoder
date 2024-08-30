@@ -116,16 +116,15 @@ Decoder::Decoder(const char *location, bool findAudioStream, bool findVideoStrea
 
     if (avformat_open_input(&formatContext, location, nullptr, nullptr) < 0) {
         avformat_free_context(formatContext);
-        formatContext = nullptr;
         throw DecoderException("Couldn't open input stream");
     }
-
-    formatContext->flags = AVFMT_SEEK_TO_PTS;
 
     if (avformat_find_stream_info(formatContext, nullptr) < 0) {
         avformat_close_input(&formatContext);
         throw DecoderException("Couldn't find stream information");
     }
+
+    formatContext->flags = AVFMT_SEEK_TO_PTS;
 
     format = new Format(location, av_rescale_q(formatContext->duration, AV_TIME_BASE_Q, (AVRational) {1, 1000000}));
 
@@ -152,6 +151,8 @@ Decoder::Decoder(const char *location, bool findAudioStream, bool findVideoStrea
                     avcodec_free_context(&audioCodecContext);
                     throw DecoderException("Could not open audio codec");
                 }
+
+                audioCodecContext->thread_count = 0;
 
                 format->sampleRate = audioCodecContext->sample_rate;
                 format->channels = audioCodecContext->channels;
@@ -186,6 +187,8 @@ Decoder::Decoder(const char *location, bool findAudioStream, bool findVideoStrea
                     throw DecoderException("Could not open video codec");
                 }
 
+                videoCodecContext->thread_count = 0;
+
                 format->width = videoCodecContext->width;
                 format->height = videoCodecContext->height;
 
@@ -198,14 +201,21 @@ Decoder::Decoder(const char *location, bool findAudioStream, bool findVideoStrea
     }
 
     if ((findAudioStream && !audioStream) && (findVideoStream && !videoStream)) {
-        avformat_free_context(formatContext);
-        formatContext = nullptr;
+        avformat_close_input(&formatContext);
         throw DecoderException("No valid streams found");
     }
 }
 
 Decoder::~Decoder() {
     std::lock_guard<std::shared_mutex> lock(mutex);
+
+    if (swsContext) {
+        sws_freeContext(swsContext);
+    }
+
+    if (swrContext) {
+        swr_free(&swrContext);
+    }
 
     if (audioCodecContext) {
         avcodec_free_context(&audioCodecContext);
@@ -217,26 +227,11 @@ Decoder::~Decoder() {
 
     if (formatContext) {
         avformat_close_input(&formatContext);
-        avformat_free_context(formatContext);
     }
-
-    if (swrContext) {
-        swr_free(&swrContext);
-    }
-
-    if (swsContext) {
-        sws_freeContext(swsContext);
-    }
-
-    delete format;
 }
 
 Frame *Decoder::nextFrame(int64_t width, int64_t height) {
     std::lock_guard<std::shared_mutex> lock(mutex);
-
-    if (!format) {
-        throw DecoderException("Unable to use uninitialized decoder");
-    }
 
     auto packet = av_packet_alloc();
 
@@ -291,10 +286,6 @@ Frame *Decoder::nextFrame(int64_t width, int64_t height) {
 
 void Decoder::seekTo(long timestampMicros, bool keyframesOnly) {
     std::lock_guard<std::shared_mutex> lock(mutex);
-
-    if (!format) {
-        throw DecoderException("Unable to use uninitialized decoder");
-    }
 
     if (timestampMicros < 0 || timestampMicros > format->durationMicros) {
         throw DecoderException("Timestamp out of bounds");
@@ -377,10 +368,6 @@ void Decoder::seekTo(long timestampMicros, bool keyframesOnly) {
 
 void Decoder::reset() {
     std::lock_guard<std::shared_mutex> lock(mutex);
-
-    if (!format) {
-        throw DecoderException("Unable to use uninitialized decoder");
-    }
 
     if (av_seek_frame(formatContext, -1, 0, AVSEEK_FLAG_FRAME) < 0) {
         throw DecoderException("Error resetting stream");
