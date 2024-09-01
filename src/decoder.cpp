@@ -1,6 +1,5 @@
 #include "decoder.h"
 
-
 std::vector<uint8_t> Decoder::_processAudioFrame(const AVFrame &src) {
     if (format->sampleRate <= 0 || format->channels <= 0) {
         throw DecoderException("Invalid audio format");
@@ -32,8 +31,8 @@ std::vector<uint8_t> Decoder::_processAudioFrame(const AVFrame &src) {
         int converted_samples = swr_convert(
                 swrContext,
                 &dataPtr,
-                (int) output_samples,
-                (const uint8_t **) src.data,
+                static_cast<int>(output_samples),
+                const_cast<const uint8_t **>(src.data),
                 src.nb_samples
         );
 
@@ -43,7 +42,7 @@ std::vector<uint8_t> Decoder::_processAudioFrame(const AVFrame &src) {
 
         data.resize(converted_samples * src.channels * sizeof(float));
 
-        return {data.begin(), data.end()};
+        return data;
     }
 
     std::vector<uint8_t> output(src.nb_samples * src.channels * sizeof(float));
@@ -105,8 +104,6 @@ std::vector<uint8_t> Decoder::_processVideoFrame(const AVFrame &src, int64_t wid
 }
 
 Decoder::Decoder(const char *location, bool findAudioStream, bool findVideoStream) {
-    std::lock_guard<std::shared_mutex> lock(mutex);
-
     av_log_set_level(AV_LOG_QUIET);
 
     formatContext = avformat_alloc_context();
@@ -207,8 +204,6 @@ Decoder::Decoder(const char *location, bool findAudioStream, bool findVideoStrea
 }
 
 Decoder::~Decoder() {
-    std::lock_guard<std::shared_mutex> lock(mutex);
-
     if (swsContext) {
         sws_freeContext(swsContext);
     }
@@ -231,8 +226,6 @@ Decoder::~Decoder() {
 }
 
 Frame *Decoder::nextFrame(int64_t width, int64_t height) {
-    std::lock_guard<std::shared_mutex> lock(mutex);
-
     auto packet = av_packet_alloc();
 
     if (!packet) {
@@ -284,9 +277,7 @@ Frame *Decoder::nextFrame(int64_t width, int64_t height) {
     return nullptr;
 }
 
-void Decoder::seekTo(long timestampMicros, bool keyframesOnly) {
-    std::lock_guard<std::shared_mutex> lock(mutex);
-
+void Decoder::seekTo(long timestampMicros, bool keyframesOnly) const {
     if (timestampMicros < 0 || timestampMicros > format->durationMicros) {
         throw DecoderException("Timestamp out of bounds");
     }
@@ -366,9 +357,7 @@ void Decoder::seekTo(long timestampMicros, bool keyframesOnly) {
     }
 }
 
-void Decoder::reset() {
-    std::lock_guard<std::shared_mutex> lock(mutex);
-
+void Decoder::reset() const {
     if (av_seek_frame(formatContext, -1, 0, AVSEEK_FLAG_FRAME) < 0) {
         throw DecoderException("Error resetting stream");
     }

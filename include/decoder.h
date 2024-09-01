@@ -4,7 +4,6 @@
 #define __STDC_CONSTANT_MACROS
 
 #include <string>
-#include <shared_mutex>
 #include <iostream>
 #include "frame.h"
 #include "format.h"
@@ -19,7 +18,6 @@ extern "C" {
 }
 
 struct Decoder {
-    std::shared_mutex mutex;
     Format *format;
     AVFormatContext *formatContext;
     AVCodecContext *audioCodecContext = nullptr;
@@ -41,9 +39,9 @@ public:
 
     Frame *nextFrame(int64_t width, int64_t height);
 
-    void seekTo(long timestampMicros, bool keyframesOnly);
+    void seekTo(long timestampMicros, bool keyframesOnly) const;
 
-    void reset();
+    void reset() const;
 };
 
 #endif //KLARITY_DECODER_DECODER_H
