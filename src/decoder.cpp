@@ -103,7 +103,7 @@ std::vector<uint8_t> Decoder::_processVideoFrame(const AVFrame &src, int64_t wid
     return output;
 }
 
-Decoder::Decoder(const char *location, bool findAudioStream, bool findVideoStream) {
+Decoder::Decoder(const std::string &location, bool findAudioStream, bool findVideoStream) {
     av_log_set_level(AV_LOG_QUIET);
 
     formatContext = avformat_alloc_context();
@@ -111,7 +111,7 @@ Decoder::Decoder(const char *location, bool findAudioStream, bool findVideoStrea
         throw DecoderException("Could not allocate format context");
     }
 
-    if (avformat_open_input(&formatContext, location, nullptr, nullptr) < 0) {
+    if (avformat_open_input(&formatContext, location.c_str(), nullptr, nullptr) < 0) {
         avformat_free_context(formatContext);
         throw DecoderException("Couldn't open input stream");
     }
@@ -226,6 +226,10 @@ Decoder::~Decoder() {
 }
 
 Frame *Decoder::nextFrame(int64_t width, int64_t height) {
+    if (!formatContext) {
+        throw DecoderException("Uninitialized decoder");
+    }
+
     auto packet = av_packet_alloc();
 
     if (!packet) {
@@ -278,6 +282,10 @@ Frame *Decoder::nextFrame(int64_t width, int64_t height) {
 }
 
 void Decoder::seekTo(long timestampMicros, bool keyframesOnly) const {
+    if (!formatContext) {
+        throw DecoderException("Uninitialized decoder");
+    }
+
     if (timestampMicros < 0 || timestampMicros > format->durationMicros) {
         throw DecoderException("Timestamp out of bounds");
     }
@@ -358,6 +366,10 @@ void Decoder::seekTo(long timestampMicros, bool keyframesOnly) const {
 }
 
 void Decoder::reset() const {
+    if (!formatContext) {
+        throw DecoderException("Uninitialized decoder");
+    }
+
     if (av_seek_frame(formatContext, -1, 0, AVSEEK_FLAG_FRAME) < 0) {
         throw DecoderException("Error resetting stream");
     }

@@ -33,7 +33,7 @@ private:
     std::vector<uint8_t> _processAudioFrame(const AVFrame &src);
 
 public:
-    explicit Decoder(const char *location, bool findAudioStream, bool findVideoStream);
+    explicit Decoder(const std::string &location, bool findAudioStream, bool findVideoStream);
 
     ~Decoder();
 

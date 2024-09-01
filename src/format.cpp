@@ -1,5 +1,8 @@
 #include "format.h"
 
-Format::Format(const char *location, uint64_t durationMicros) : location(location), durationMicros(durationMicros) {}
+#include <utility>
+
+Format::Format(std::string location, uint64_t durationMicros) : location(std::move(location)),
+                                                                durationMicros(durationMicros) {}
 
 Format::~Format() = default;
